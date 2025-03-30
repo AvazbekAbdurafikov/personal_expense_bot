@@ -119,11 +119,19 @@ async def add_expense(message: types.Message, state: FSMContext):
     if not await check_user_access(message):
         return
 
+    # Get user categories
+    user_id = await db.get_or_create_user(message.from_user.id)
+    categories = await db.get_categories(user_id)
+    
+    if not categories:
+        await message.answer("Xatolik: Kategoriyalar topilmadi. /start buyrug'ini qayta yuboring.")
+        return
+
+    await state.set_state(ExpenseStates.waiting_for_amount)
     await message.answer(
         "Xarajat miqdorini kiriting (faqat raqamlar):",
-        reply_markup=get_cancel_keyboard()
+        reply_markup=types.ReplyKeyboardRemove()
     )
-    await state.set_state(ExpenseStates.waiting_for_amount)
 
 @dp.message(Command("add_expense"))
 async def cmd_add_expense(message: types.Message, state: FSMContext):
@@ -140,40 +148,30 @@ async def cmd_add_expense(message: types.Message, state: FSMContext):
 @dp.message(StateFilter(ExpenseStates.waiting_for_amount))
 async def process_amount(message: types.Message, state: FSMContext):
     """Process expense amount"""
-    if not await check_user_access(message):
-        return
-
     try:
-        # Remove any spaces and replace , with .
-        amount_str = message.text.replace(" ", "").replace(",", ".")
-        amount = float(amount_str)
-        
+        # Remove spaces and convert to integer
+        amount = int(message.text.replace(" ", ""))
         if amount <= 0:
-            await message.answer(
-                "❌ Xarajat miqdori 0 dan katta bo'lishi kerak.",
-                reply_markup=get_cancel_keyboard()
-            )
-            return
-        
-        # Get or create user and store both user_id and amount
+            raise ValueError("Amount must be positive")
+
+        # Store amount in state
+        await state.update_data(amount=amount)
+
+        # Get categories for inline keyboard
         user_id = await db.get_or_create_user(message.from_user.id)
-        await state.update_data(amount=amount, user_id=user_id)
-        
-        # Get categories for this user
         categories = await db.get_categories(user_id)
-        
-        # Instead of trying to delete old messages, just send new one
+
+        # Show category selection keyboard
+        await state.set_state(ExpenseStates.waiting_for_category)
         await message.answer(
-            f"💰 Miqdor: {format_number(amount)} so'm\n"
-            f"📁 Xarajat kategoriyasini tanlang:",
+            f"Kategoriyani tanlang ({format_number(amount)} so'm):",
             reply_markup=get_categories_keyboard(categories)
         )
-        await state.set_state(ExpenseStates.waiting_for_category)
-        
-    except ValueError:
+
+    except (ValueError, TypeError):
         await message.answer(
-            "❌ Noto'g'ri format. Iltimos, raqam kiriting.",
-            reply_markup=get_cancel_keyboard()
+            "Noto'g'ri format. Iltimos, faqat raqamlardan foydalaning.\n"
+            "Masalan: 50000"
         )
 
 @dp.callback_query(lambda c: c.data.startswith("category_"))
@@ -200,7 +198,7 @@ async def process_description(message: types.Message, state: FSMContext):
     data = await state.get_data()
     amount = data["amount"]
     category_id = data["category_id"]
-    user_id = data["user_id"]
+    user_id = await db.get_or_create_user(message.from_user.id)
     description = message.text
 
     await db.add_expense(user_id, amount, category_id, description)

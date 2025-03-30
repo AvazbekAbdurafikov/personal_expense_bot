@@ -49,28 +49,43 @@ class Database:
         """Get or create user and return user_id"""
         async with aiosqlite.connect(self.db_name) as db:
             # Try to get existing user
-            async with db.execute(
-                "SELECT id FROM users WHERE telegram_id = ?",
+            cursor = await db.execute(
+                'SELECT id FROM users WHERE telegram_id = ?',
                 (telegram_id,)
-            ) as cursor:
-                user = await cursor.fetchone()
-                if user:
-                    return user[0]
+            )
+            user = await cursor.fetchone()
+
+            if user:
+                return user[0]
 
             # Create new user
             await db.execute(
-                "INSERT INTO users (telegram_id) VALUES (?)",
+                'INSERT INTO users (telegram_id) VALUES (?)',
                 (telegram_id,)
             )
             await db.commit()
 
-            # Get the new user_id
-            async with db.execute(
-                "SELECT id FROM users WHERE telegram_id = ?",
+            # Get the new user's id
+            cursor = await db.execute(
+                'SELECT id FROM users WHERE telegram_id = ?',
                 (telegram_id,)
-            ) as cursor:
-                user = await cursor.fetchone()
-                return user[0]
+            )
+            user = await cursor.fetchone()
+
+            # Create default categories for the new user
+            default_categories = [
+                "🏠 Uy-joy", "🍽️ Oziq-ovqat", "🚗 Transport",
+                "👕 Kiyim-kechak", "💊 Sog'liq", "📚 Ta'lim",
+                "🎮 Ko'ngil ochar", "🛍️ Boshqa"
+            ]
+            for category in default_categories:
+                await db.execute(
+                    'INSERT OR IGNORE INTO categories (user_id, name) VALUES (?, ?)',
+                    (user[0], category)
+                )
+            await db.commit()
+
+            return user[0]
 
     async def initialize_categories(self, user_id: int):
         """Initialize default categories for new user"""
